@@ -1,0 +1,12 @@
+{
+  "name": "chat-application-root",
+  "version": "1.0.0",
+  "description": "Real-Time Glassmorphism Chat Application with Node.js, Express, Socket.io, React & Vite",
+  "private": true,
+  "scripts": {
+    "start": "node Backend/Server.js",
+    "server": "npm --prefix Backend dev",
+    "client": "npm --prefix Frontend dev",
+    "build": "npm --prefix Frontend build"
+  }
+}
