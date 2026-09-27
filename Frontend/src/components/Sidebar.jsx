@@ -1,42 +1,34 @@
 import React, { useState } from 'react';
 import { 
-  Hash, 
-  Lock, 
-  Plus, 
   Search, 
   MessageSquare, 
-  UserCheck, 
   Volume2, 
   VolumeX, 
   Sun, 
   Moon, 
   LogOut,
-  ChevronDown
+  User,
+  UserPlus
 } from 'lucide-react';
 
 export default function Sidebar({
-  channels = [],
   users = [],
   currentUser,
   activeRoom,
   onSelectRoom,
-  onOpenCreateChannel,
   unreadCounts = {},
   theme,
   onToggleTheme,
   soundEnabled,
   onToggleSound,
-  onLogout
+  onLogout,
+  onNewUserTab
 }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [showStatusMenu, setShowStatusMenu] = useState(false);
-
-  const filteredChannels = channels.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   const otherUsers = users.filter(u => u.id !== currentUser.id &&
-    u.username.toLowerCase().includes(searchTerm.toLowerCase())
+    (u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+     (u.bio && u.bio.toLowerCase().includes(searchTerm.toLowerCase())))
   );
 
   const getUnread = (roomId) => unreadCounts[roomId] || 0;
@@ -46,9 +38,17 @@ export default function Sidebar({
       {/* Brand Header */}
       <div className="sidebar-header">
         <div className="brand-title">
-          <span>💬</span> ChatPulse
+          <span>💬</span> Nexora
         </div>
         <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            className="glass-btn"
+            style={{ padding: '6px', color: 'var(--whatsapp-green)' }}
+            onClick={onNewUserTab}
+            title="Chat as Another User (New Tab)"
+          >
+            <UserPlus size={16} />
+          </button>
           <button
             className="glass-btn"
             style={{ padding: '6px' }}
@@ -76,59 +76,26 @@ export default function Sidebar({
             type="text"
             className="glass-input"
             style={{ paddingLeft: '32px', fontSize: '0.82rem', padding: '7px 10px 7px 32px' }}
-            placeholder="Search channels or users..."
+            placeholder="Search or start new chat..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
       </div>
 
+      {/* WhatsApp Chats & Contacts List */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {/* Channels Section */}
         <div className="sidebar-section">
           <div className="section-label">
-            <span>CHANNELS ({filteredChannels.length})</span>
-            <button
-              onClick={onOpenCreateChannel}
-              style={{ background: 'none', border: 'none', color: 'var(--primary-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-              title="Create new channel"
-            >
-              <Plus size={16} />
-            </button>
-          </div>
-
-          {filteredChannels.map(channel => {
-            const isActive = activeRoom === channel.id;
-            const unread = getUnread(channel.id);
-
-            return (
-              <div
-                key={channel.id}
-                className={`channel-item ${isActive ? 'active' : ''}`}
-                onClick={() => onSelectRoom(channel.id)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                  {channel.isPrivate ? <Lock size={15} color="var(--amber-accent)" /> : <Hash size={15} color="var(--primary-accent)" />}
-                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {channel.name}
-                  </span>
-                </div>
-                {unread > 0 && <span className="unread-badge">{unread}</span>}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Direct Messages Section */}
-        <div className="sidebar-section" style={{ marginTop: '10px' }}>
-          <div className="section-label">
-            <span>DIRECT MESSAGES ({otherUsers.length})</span>
+            <span>CHATS & CONTACTS ({otherUsers.length})</span>
           </div>
 
           {otherUsers.length === 0 ? (
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', padding: '0 8px' }}>
-              No other users online yet. Open another browser tab to test 1-on-1 chat!
-            </p>
+            <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+              <MessageSquare size={24} style={{ marginBottom: '8px', color: 'var(--primary-accent)' }} />
+              <p>No other contacts online yet.</p>
+              <p style={{ fontSize: '0.75rem', marginTop: '4px' }}>Open a 2nd browser tab to test 1-on-1 direct chat!</p>
+            </div>
           ) : (
             otherUsers.map(user => {
               const dmRoomId = `dm-${[currentUser.id, user.id].sort().join('-')}`;
@@ -140,17 +107,34 @@ export default function Sidebar({
                   key={user.id}
                   className={`user-item ${isActive ? 'active' : ''}`}
                   onClick={() => onSelectRoom(dmRoomId)}
+                  style={{
+                    padding: '10px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderRadius: '8px',
+                    marginBottom: '4px',
+                    cursor: 'pointer'
+                  }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ position: 'relative', fontSize: '1.1rem' }}>
-                      {user.avatar}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden' }}>
+                    <div style={{ position: 'relative', fontSize: '1.4rem', flexShrink: 0 }}>
+                      {user.avatar || '👤'}
                       <span
-                        className={`status-dot ${user.status}`}
-                        style={{ position: 'absolute', bottom: -2, right: -2, width: 8, height: 8 }}
+                        className={`status-dot ${user.status || 'online'}`}
+                        style={{ position: 'absolute', bottom: -2, right: -2, width: 9, height: 9 }}
                       />
                     </div>
-                    <span style={{ fontSize: '0.88rem' }}>{user.username}</span>
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.92rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {user.username}
+                      </div>
+                      <div style={{ fontSize: '0.76rem', color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {user.bio || 'Available on WhatsApp'}
+                      </div>
+                    </div>
                   </div>
+
                   {unread > 0 && <span className="unread-badge">{unread}</span>}
                 </div>
               );
@@ -169,7 +153,7 @@ export default function Sidebar({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {currentUser.username}
+              {currentUser.username} (You)
             </span>
           </div>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -177,14 +161,24 @@ export default function Sidebar({
           </p>
         </div>
 
-        <button
-          className="glass-btn"
-          style={{ padding: '6px', color: 'var(--rose-accent)' }}
-          onClick={onLogout}
-          title="Sign Out"
-        >
-          <LogOut size={16} />
-        </button>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            className="glass-btn"
+            style={{ padding: '6px', color: 'var(--whatsapp-green)' }}
+            onClick={onNewUserTab}
+            title="Chat as another user in a new tab"
+          >
+            <UserPlus size={16} />
+          </button>
+          <button
+            className="glass-btn"
+            style={{ padding: '6px', color: 'var(--rose-accent)' }}
+            onClick={onLogout}
+            title="Sign Out"
+          >
+            <LogOut size={16} />
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -1,8 +1,8 @@
-# 💬 ChatPulse — Real-Time Glassmorphism Chat Application
+# 💬 Nexora — Real-Time Glassmorphism Chat Application
 
-ChatPulse is a high-performance, feature-rich real-time messaging application built with Node.js, Express, Socket.io, React 18, Vite, and custom CSS glassmorphism styling.
+Nexora is a high-performance, feature-rich real-time messaging application built with Node.js, Express, Socket.io, React 18, Vite, and custom CSS glassmorphism styling.
 
-![ChatPulse Features](https://img.shields.io/badge/Stack-Node.js%20%7C%20Socket.io%20%7C%20React%2018%20%7C%20Vite-6366F1?style=for-the-badge)
+![Nexora Features](https://img.shields.io/badge/Stack-Node.js%20%7C%20Socket.io%20%7C%20React%2018%20%7C%20Vite-6366F1?style=for-the-badge)
 
 ---
 

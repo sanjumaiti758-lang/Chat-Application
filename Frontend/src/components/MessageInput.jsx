@@ -59,6 +59,7 @@ export default function MessageInput({
   };
 
   const handleKeyDown = (e) => {
+    if (e.nativeEvent && e.nativeEvent.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();

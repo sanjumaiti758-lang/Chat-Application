@@ -60,39 +60,92 @@ export default function MessageItem({
     setIsEditing(false);
   };
 
-  // Simple Markdown & Link Formatter
-  const renderFormattedText = (text) => {
-    if (!text) return null;
+  // Full Markdown & Multi-line Code Block Formatter
+  const renderFormattedText = (rawText) => {
+    if (!rawText) return null;
 
-    // Bold **text**
-    let parts = text.split(/(\*\*.*?\*\*|`.*?`|https?:\/\/[^\s]+)/g);
+    // Handle code blocks (```lang ... ```)
+    const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
 
-    return parts.map((part, index) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={index}>{part.slice(2, -2)}</strong>;
+    while ((match = codeBlockRegex.exec(rawText)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', content: rawText.slice(lastIndex, match.index) });
       }
-      if (part.startsWith('`') && part.endsWith('`')) {
+      parts.push({ type: 'codeblock', lang: match[1] || 'code', content: match[2].trim() });
+      lastIndex = codeBlockRegex.lastIndex;
+    }
+
+    if (lastIndex < rawText.length) {
+      parts.push({ type: 'text', content: rawText.slice(lastIndex) });
+    }
+
+    return parts.map((part, pIdx) => {
+      if (part.type === 'codeblock') {
         return (
-          <code key={index} style={{ 
-            background: 'rgba(0,0,0,0.3)', 
-            padding: '2px 6px', 
-            borderRadius: '4px', 
-            fontFamily: 'Fira Code, monospace', 
+          <div key={pIdx} style={{
+            background: 'rgba(15, 23, 42, 0.85)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            margin: '8px 0',
+            fontFamily: 'Fira Code, Consolas, monospace',
             fontSize: '0.85rem',
-            color: 'var(--cyan-accent)'
+            overflowX: 'auto',
+            color: '#e2e8f0',
+            lineHeight: 1.5
           }}>
-            {part.slice(1, -1)}
-          </code>
+            {part.lang && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--cyan-accent)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '6px' }}>
+                {part.lang}
+              </div>
+            )}
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{part.content}</pre>
+          </div>
         );
       }
-      if (part.match(/^https?:\/\//)) {
+
+      // Format inline elements: newlines, bold, inline code, links
+      const lines = part.content.split('\n');
+      return lines.map((line, lIdx) => {
+        const tokens = line.split(/(\*\*.*?\*\*|`.*?`|https?:\/\/[^\s]+)/g);
+        const formattedLine = tokens.map((token, tIdx) => {
+          if (token.startsWith('**') && token.endsWith('**')) {
+            return <strong key={tIdx}>{token.slice(2, -2)}</strong>;
+          }
+          if (token.startsWith('`') && token.endsWith('`')) {
+            return (
+              <code key={tIdx} style={{
+                background: 'rgba(0,0,0,0.3)',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontFamily: 'Fira Code, monospace',
+                fontSize: '0.84rem',
+                color: 'var(--cyan-accent)'
+              }}>
+                {token.slice(1, -1)}
+              </code>
+            );
+          }
+          if (token.match(/^https?:\/\//)) {
+            return (
+              <a key={tIdx} href={token} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--cyan-accent)', textDecoration: 'underline' }}>
+                {token}
+              </a>
+            );
+          }
+          return token;
+        });
+
         return (
-          <a key={index} href={part} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--cyan-accent)', textDecoration: 'underline' }}>
-            {part}
-          </a>
+          <React.Fragment key={lIdx}>
+            {formattedLine}
+            {lIdx < lines.length - 1 && <br />}
+          </React.Fragment>
         );
-      }
-      return part;
+      });
     });
   };
 
@@ -122,12 +175,11 @@ export default function MessageItem({
 
       <div className="message-content-box">
         {/* Message Meta Header */}
-        <div className="message-meta">
-          <span className="sender-name">{message.sender?.username}</span>
-          <span>•</span>
-          <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          {message.edited && <span style={{ fontStyle: 'italic', opacity: 0.7 }}>(edited)</span>}
-        </div>
+        {!isOwnMessage && (
+          <div className="message-meta">
+            <span className="sender-name">{message.sender?.username}</span>
+          </div>
+        )}
 
         {/* Message Bubble Container */}
         <div className="message-bubble">
@@ -165,7 +217,18 @@ export default function MessageItem({
               </button>
             </div>
           ) : (
-            <div>{renderFormattedText(message.text)}</div>
+            <div>
+              <span>{renderFormattedText(message.text)}</span>
+              <span className="bubble-footer">
+                <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                {message.edited && <span style={{ fontStyle: 'italic', opacity: 0.7 }}>(edited)</span>}
+                {isOwnMessage && (
+                  <span className="whatsapp-ticks" style={{ color: message.status === 'read' ? '#53bdeb' : 'var(--text-dim)', fontWeight: 600 }}>
+                    {message.status === 'sent' ? '✓' : '✓✓'}
+                  </span>
+                )}
+              </span>
+            </div>
           )}
 
           {/* Attachment Preview (Image / File) */}

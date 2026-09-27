@@ -5,36 +5,88 @@ import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import InfoPanel from './components/InfoPanel';
 import MediaLightbox from './components/MediaLightbox';
-import CreateChannelModal from './components/CreateChannelModal';
 import { sounds } from './utils/SoundEffects';
 
 // Initialize Socket.io connection instance
-const socket = io('/', {
-  autoConnect: false,
-  reconnectionAttempts: 10,
-  reconnectionDelay: 1000
+const getSocketUrl = () => {
+  if (typeof window !== 'undefined') {
+    if (window.location.port && window.location.port !== '5000') {
+      return `${window.location.protocol}//${window.location.hostname}:5000`;
+    }
+    return window.location.origin;
+  }
+  return 'http://localhost:5000';
+};
+
+const socket = io(getSocketUrl(), {
+  autoConnect: true,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  transports: ['websocket', 'polling']
 });
+
+// Helper to normalize DM room IDs consistently across frontend
+export const normalizeRoomId = (roomId, currentUserId) => {
+  if (!roomId) return 'general';
+  if (roomId === 'system' || roomId === 'dm-system') {
+    if (currentUserId) {
+      return `dm-${[currentUserId, 'system'].sort().join('-')}`;
+    }
+    return 'dm-system';
+  }
+  if (roomId.startsWith('dm-')) {
+    const raw = roomId.slice(3);
+    const parts = raw.split('-');
+    if (parts.length === 2) {
+      return `dm-${parts.sort().join('-')}`;
+    }
+  }
+  return roomId;
+};
+
+const DEFAULT_CONTACTS = [
+  { id: 'system', username: 'ChatBot AI', avatar: '🤖', bio: 'Official Nexora AI Assistant • Online 24/7', status: 'online' }
+];
+
+const mergeUsersWithDefaults = (fetchedUsers = []) => {
+  const map = new Map();
+  DEFAULT_CONTACTS.forEach(u => map.set(u.id, u));
+  fetchedUsers.forEach(u => map.set(u.id, u));
+  return Array.from(map.values());
+};
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('chatpulse_user');
-    return saved ? JSON.parse(saved) : null;
+    const sessionSaved = sessionStorage.getItem('nexora_user') || sessionStorage.getItem('chatpulse_user');
+    if (sessionSaved) {
+      try { return JSON.parse(sessionSaved); } catch (e) {}
+    }
+    const localSaved = localStorage.getItem('nexora_user') || localStorage.getItem('chatpulse_user');
+    if (localSaved) {
+      try {
+        const u = JSON.parse(localSaved);
+        sessionStorage.setItem('nexora_user', JSON.stringify(u));
+        return u;
+      } catch (e) {}
+    }
+    return null;
   });
 
-  const [activeRoom, setActiveRoom] = useState('general');
-  const [channels, setChannels] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [activeRoom, setActiveRoom] = useState(() => {
+    return currentUser ? normalizeRoomId('system', currentUser.id) : 'dm-system';
+  });
+  const [users, setUsers] = useState(DEFAULT_CONTACTS);
   const [messages, setMessages] = useState([]);
   const [unreadCounts, setUnreadCounts] = useState({});
   const [typingUsers, setTypingUsers] = useState([]);
 
   // UI state toggles
   const [showInfoPanel, setShowInfoPanel] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [lightboxMediaUrl, setLightboxMediaUrl] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
 
-  const [theme, setTheme] = useState(() => localStorage.getItem('chatpulse_theme') || 'dark');
+  const [theme, setTheme] = useState(() => localStorage.getItem('nexora_theme') || 'dark');
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   const activeRoomRef = useRef(activeRoom);
@@ -43,134 +95,180 @@ export default function App() {
   // Apply theme attribute to document element
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('chatpulse_theme', theme);
+    localStorage.setItem('nexora_theme', theme);
   }, [theme]);
 
   // Connect socket and listen for real-time events once user logs in
   useEffect(() => {
     if (!currentUser) return;
 
-    socket.connect();
+    const onConnect = () => {
+      socket.emit('user_login', currentUser, (response) => {
+        if (response && response.success) {
+          if (response.users) setUsers(mergeUsersWithDefaults(response.users));
+          const defaultRoom = normalizeRoomId(response.defaultRoom || 'system', currentUser.id);
+          
+          setActiveRoom(defaultRoom);
+          activeRoomRef.current = defaultRoom;
 
-    // Authenticate with server
-    socket.emit('user_login', currentUser, (response) => {
-      if (response && response.success) {
-        setChannels(response.channels || []);
-        setMessages(response.messages || []);
-      }
-    });
+          socket.emit('join_room', defaultRoom, (roomRes) => {
+            if (roomRes && roomRes.success) {
+              setMessages(roomRes.messages || []);
+            }
+          });
+        }
+      });
+    };
+
+    socket.on('connect', onConnect);
+    if (socket.connected) {
+      onConnect();
+    } else {
+      socket.connect();
+    }
 
     // Event Listeners
     socket.on('users_update', (updatedUsers) => {
-      setUsers(updatedUsers);
-    });
-
-    socket.on('channels_update', (updatedChannels) => {
-      setChannels(updatedChannels);
+      setUsers(mergeUsersWithDefaults(updatedUsers));
     });
 
     socket.on('new_message', (newMsg) => {
-      if (newMsg.roomId === activeRoomRef.current) {
-        setMessages(prev => [...prev, newMsg]);
+      if (!newMsg || !currentUser) return;
+
+      const normMsgRoom = normalizeRoomId(newMsg.roomId, currentUser.id);
+      const normActiveRoom = normalizeRoomId(activeRoomRef.current, currentUser.id);
+
+      // If this is a DM room, ensure the current user is a participant
+      if (normMsgRoom.startsWith('dm-') && !normMsgRoom.includes(currentUser.id)) {
+        return;
+      }
+
+      const isCurrentRoom = (normMsgRoom === normActiveRoom);
+
+      if (isCurrentRoom) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
         if (newMsg.sender?.id !== currentUser.id) {
           sounds.playReceived();
         }
       } else {
-        // Increment unread count for other rooms
+        // Increment unread count for other participating rooms
         setUnreadCounts(prev => ({
           ...prev,
-          [newMsg.roomId]: (prev[newMsg.roomId] || 0) + 1
+          [normMsgRoom]: (prev[normMsgRoom] || 0) + 1
         }));
         sounds.playReceived();
       }
     });
 
     socket.on('user_typing_start', ({ userId, username, roomId }) => {
+      const normRoom = normalizeRoomId(roomId, currentUser.id);
       setTypingUsers(prev => {
-        if (!prev.some(t => t.userId === userId && t.roomId === roomId)) {
-          return [...prev, { userId, username, roomId }];
+        if (!prev.some(t => t.userId === userId && normalizeRoomId(t.roomId, currentUser.id) === normRoom)) {
+          return [...prev, { userId, username, roomId: normRoom }];
         }
         return prev;
       });
     });
 
     socket.on('user_typing_stop', ({ userId, roomId }) => {
-      setTypingUsers(prev => prev.filter(t => !(t.userId === userId && t.roomId === roomId)));
+      const normRoom = normalizeRoomId(roomId, currentUser.id);
+      setTypingUsers(prev => prev.filter(t => !(t.userId === userId && normalizeRoomId(t.roomId, currentUser.id) === normRoom)));
     });
 
     socket.on('message_reaction_update', ({ roomId, messageId, reactions }) => {
-      if (roomId === activeRoomRef.current) {
+      if (normalizeRoomId(roomId, currentUser.id) === normalizeRoomId(activeRoomRef.current, currentUser.id)) {
         setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions } : m));
       }
     });
 
     socket.on('message_updated', ({ roomId, messageId, newText, edited }) => {
-      if (roomId === activeRoomRef.current) {
+      if (normalizeRoomId(roomId, currentUser.id) === normalizeRoomId(activeRoomRef.current, currentUser.id)) {
         setMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: newText, edited } : m));
       }
     });
 
     socket.on('message_deleted', ({ roomId, messageId }) => {
-      if (roomId === activeRoomRef.current) {
+      if (normalizeRoomId(roomId, currentUser.id) === normalizeRoomId(activeRoomRef.current, currentUser.id)) {
         setMessages(prev => prev.filter(m => m.id !== messageId));
       }
     });
 
     return () => {
+      socket.off('connect', onConnect);
       socket.off('users_update');
-      socket.off('channels_update');
       socket.off('new_message');
       socket.off('user_typing_start');
       socket.off('user_typing_stop');
       socket.off('message_reaction_update');
       socket.off('message_updated');
       socket.off('message_deleted');
-      socket.disconnect();
     };
   }, [currentUser]);
 
   // Handle Login submission
   const handleLogin = (userData) => {
     const userWithId = { ...userData, id: 'usr_' + Date.now() };
+    const defaultRoom = normalizeRoomId('system', userWithId.id);
     setCurrentUser(userWithId);
-    localStorage.setItem('chatpulse_user', JSON.stringify(userWithId));
+    setActiveRoom(defaultRoom);
+    activeRoomRef.current = defaultRoom;
+    sessionStorage.setItem('nexora_user', JSON.stringify(userWithId));
+    localStorage.setItem('nexora_user', JSON.stringify(userWithId));
   };
 
-  // Handle Room / Channel / DM Switch
+  // Handle Room / Contact Switch
   const handleSelectRoom = (roomId) => {
-    setActiveRoom(roomId);
+    const targetRoom = normalizeRoomId(roomId, currentUser?.id);
+
+    setActiveRoom(targetRoom);
+    activeRoomRef.current = targetRoom;
     setReplyingTo(null);
 
     // Clear unread count for selected room
-    setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
+    setUnreadCounts(prev => ({ ...prev, [targetRoom]: 0, [roomId]: 0 }));
 
-    socket.emit('join_room', roomId, (response) => {
+    socket.emit('join_room', targetRoom, (response) => {
       if (response && response.success) {
+        const finalRoom = normalizeRoomId(response.roomId || targetRoom, currentUser?.id);
+        if (finalRoom !== activeRoomRef.current) {
+          setActiveRoom(finalRoom);
+          activeRoomRef.current = finalRoom;
+        }
         setMessages(response.messages || []);
-      }
-    });
-  };
-
-  // Create Channel
-  const handleCreateChannel = (channelData) => {
-    socket.emit('create_channel', channelData, (response) => {
-      if (response && response.success) {
-        setShowCreateModal(false);
-        handleSelectRoom(response.channel.id);
-      } else {
-        alert(response?.error || 'Failed to create channel');
       }
     });
   };
 
   // Send Message
   const handleSendMessage = (msgPayload) => {
+    if (!currentUser) return;
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    const currentRoom = normalizeRoomId(activeRoomRef.current || activeRoom, currentUser.id);
+
     socket.emit('send_message', {
-      roomId: activeRoom,
+      roomId: currentRoom,
+      userId: currentUser.id,
+      user: currentUser.username,
+      avatar: currentUser.avatar,
       ...msgPayload
     }, (res) => {
-      if (res && res.success) {
+      if (res && res.success && res.message) {
         sounds.playSent();
+        const msgRoom = normalizeRoomId(res.message.roomId || currentRoom, currentUser.id);
+        if (msgRoom !== normalizeRoomId(activeRoomRef.current, currentUser.id)) {
+          setActiveRoom(msgRoom);
+          activeRoomRef.current = msgRoom;
+        }
+        setMessages(prev => {
+          if (prev.some(m => m.id === res.message.id)) return prev;
+          return [...prev, res.message];
+        });
       }
     });
   };
@@ -207,9 +305,18 @@ export default function App() {
 
   // Logout
   const handleLogout = () => {
-    localStorage.removeItem('chatpulse_user');
+    sessionStorage.removeItem('nexora_user');
+    localStorage.removeItem('nexora_user');
     setCurrentUser(null);
     socket.disconnect();
+  };
+
+  // Open 2nd user chat session in a new tab without logging out
+  const handleNewUserTab = () => {
+    const newWindow = window.open(window.location.origin, '_blank');
+    if (newWindow) {
+      newWindow.sessionStorage?.clear();
+    }
   };
 
   if (!currentUser) {
@@ -218,33 +325,24 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {/* Background Animated Ambient Orbs */}
-      <div className="ambient-bg">
-        <div className="ambient-orb ambient-orb-1" />
-        <div className="ambient-orb ambient-orb-2" />
-        <div className="ambient-orb ambient-orb-3" />
-      </div>
-
-      {/* Navigation Sidebar */}
+      {/* Navigation Sidebar (WhatsApp Contacts & Chats) */}
       <Sidebar
-        channels={channels}
         users={users}
         currentUser={currentUser}
         activeRoom={activeRoom}
         onSelectRoom={handleSelectRoom}
-        onOpenCreateChannel={() => setShowCreateModal(true)}
         unreadCounts={unreadCounts}
         theme={theme}
         onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
         soundEnabled={soundEnabled}
         onToggleSound={handleToggleSound}
         onLogout={handleLogout}
+        onNewUserTab={handleNewUserTab}
       />
 
       {/* Primary Chat Area */}
       <ChatArea
         activeRoom={activeRoom}
-        channels={channels}
         users={users}
         messages={messages}
         currentUser={currentUser}
@@ -262,24 +360,15 @@ export default function App() {
         onOpenMedia={(url) => setLightboxMediaUrl(url)}
       />
 
-      {/* Channel / DM Details Drawer */}
+      {/* Contact Details Drawer */}
       {showInfoPanel && (
         <InfoPanel
           activeRoom={activeRoom}
-          channels={channels}
           users={users}
           messages={messages}
           currentUser={currentUser}
           onClose={() => setShowInfoPanel(false)}
           onOpenMedia={(url) => setLightboxMediaUrl(url)}
-        />
-      )}
-
-      {/* Modals */}
-      {showCreateModal && (
-        <CreateChannelModal
-          onCreate={handleCreateChannel}
-          onClose={() => setShowCreateModal(false)}
         />
       )}
 

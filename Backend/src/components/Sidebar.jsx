@@ -46,7 +46,7 @@ export default function Sidebar({
       {/* Brand Header */}
       <div className="sidebar-header">
         <div className="brand-title">
-          <span>💬</span> ChatPulse
+          <span>💬</span> Nexora
         </div>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button

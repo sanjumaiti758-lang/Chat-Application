@@ -15,7 +15,6 @@ import MessageInput from './MessageInput';
 
 export default function ChatArea({
   activeRoom,
-  channels = [],
   users = [],
   messages = [],
   currentUser,
@@ -39,48 +38,46 @@ export default function ChatArea({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typingUsers]);
 
-  // Determine channel or DM details
-  let roomTitle = activeRoom;
-  let roomDesc = '';
-  let isPrivate = false;
-  let isDM = activeRoom?.startsWith('dm-');
+  // Determine Contact details
+  const parts = activeRoom?.startsWith('dm-') ? activeRoom.replace('dm-', '').split('-') : [];
+  const otherUserId = parts.find(id => id !== currentUser.id) || 'system';
+  const otherUser = users.find(u => u.id === otherUserId) || {
+    id: 'system',
+    username: 'ChatBot AI',
+    avatar: '🤖',
+    status: 'online',
+    bio: 'Official WhatsApp AI Assistant'
+  };
 
-  if (isDM) {
-    const parts = activeRoom.replace('dm-', '').split('-');
-    const otherUserId = parts.find(id => id !== currentUser.id);
-    const otherUser = users.find(u => u.id === otherUserId);
-
-    roomTitle = otherUser ? `Chat with @${otherUser.username}` : 'Direct Message';
-    roomDesc = otherUser ? `${otherUser.status} • ${otherUser.bio || 'Direct message'}` : 'Private 1-on-1 chat';
-  } else {
-    const ch = channels.find(c => c.id === activeRoom);
-    if (ch) {
-      roomTitle = `#${ch.name}`;
-      roomDesc = ch.description || 'Channel discussion';
-      isPrivate = ch.isPrivate;
-    }
-  }
+  const contactName = otherUser.username;
+  const contactAvatar = otherUser.avatar || '👤';
+  const contactStatus = otherUser.status || 'online';
+  const contactBio = otherUser.bio || 'Available on WhatsApp';
 
   // Filter typing users for current room
   const activeTypingInRoom = typingUsers.filter(t => t.roomId === activeRoom && t.userId !== currentUser.id);
 
   return (
     <main className="chat-main">
-      {/* Header Bar */}
+      {/* Header Bar (WhatsApp Contact Header) */}
       <header className="chat-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div className="channel-title-text">
-            {isDM ? (
-              <span style={{ fontSize: '1.2rem' }}>💬</span>
-            ) : isPrivate ? (
-              <Lock size={18} color="var(--amber-accent)" />
-            ) : (
-              <Hash size={18} color="var(--primary-accent)" />
-            )}
-            <span>{roomTitle}</span>
+          <div style={{ position: 'relative', fontSize: '1.5rem' }}>
+            {contactAvatar}
+            <span className={`status-dot ${contactStatus}`} style={{ position: 'absolute', bottom: -2, right: -2 }} />
           </div>
-          <span style={{ color: 'var(--text-dim)' }}>|</span>
-          <span className="channel-desc">{roomDesc}</span>
+          <div>
+            <div className="channel-title-text" style={{ fontSize: '1rem', fontWeight: 700 }}>
+              {contactName}
+            </div>
+            <div className="channel-desc" style={{ fontSize: '0.78rem' }}>
+              {activeTypingInRoom.length > 0 ? (
+                <span style={{ color: 'var(--whatsapp-green)', fontStyle: 'italic', fontWeight: 600 }}>typing...</span>
+              ) : (
+                <span>{contactStatus === 'online' ? 'online' : contactBio}</span>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Quick Actions */}
@@ -112,19 +109,21 @@ export default function ChatArea({
         </div>
       </header>
 
-      {/* Pinned Welcome Banner */}
+      {/* WhatsApp Welcome Banner */}
       <div style={{
-        padding: '8px 20px',
-        background: 'rgba(99, 102, 241, 0.1)',
+        padding: '6px 16px',
+        background: 'var(--bg-dark-header)',
         borderBottom: '1px solid var(--bg-glass-border)',
-        fontSize: '0.82rem',
+        fontSize: '0.8rem',
         display: 'flex',
         alignItems: 'center',
-        gap: '8px',
-        color: 'var(--text-muted)'
+        justifyContent: 'center',
+        gap: '6px',
+        color: 'var(--text-muted)',
+        zIndex: 5
       }}>
-        <Pin size={14} color="var(--primary-accent)" />
-        <span><strong>Pinned Note:</strong> Real-time WebSockets connected. Send messages, emojis, media, or voice notes!</span>
+        <Lock size={12} color="var(--primary-accent)" />
+        <span>Messages are end-to-end encrypted across connected tabs.</span>
       </div>
 
       {/* Scrollable Message Feed */}

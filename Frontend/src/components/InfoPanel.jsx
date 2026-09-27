@@ -1,43 +1,30 @@
 import React from 'react';
 import { 
-  Users, 
   Image as ImageIcon, 
   FileText, 
-  ShieldCheck, 
   Info, 
-  X, 
-  Hash, 
-  Lock 
+  X,
+  User,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function InfoPanel({
   activeRoom,
-  channels = [],
   users = [],
   messages = [],
   currentUser,
   onClose,
   onOpenMedia
 }) {
-  const isDM = activeRoom?.startsWith('dm-');
-  let roomName = activeRoom;
-  let roomDesc = '';
-  let category = '';
-
-  if (isDM) {
-    const parts = activeRoom.replace('dm-', '').split('-');
-    const otherUserId = parts.find(id => id !== currentUser.id);
-    const otherUser = users.find(u => u.id === otherUserId);
-    roomName = otherUser ? `@${otherUser.username}` : 'Direct Chat';
-    roomDesc = otherUser?.bio || 'Private 1-on-1 discussion';
-  } else {
-    const ch = channels.find(c => c.id === activeRoom);
-    if (ch) {
-      roomName = `#${ch.name}`;
-      roomDesc = ch.description || 'Channel conversation';
-      category = ch.category || 'General';
-    }
-  }
+  const parts = activeRoom?.startsWith('dm-') ? activeRoom.replace('dm-', '').split('-') : [];
+  const otherUserId = parts.find(id => id !== currentUser.id) || 'system';
+  const otherUser = users.find(u => u.id === otherUserId) || {
+    id: 'system',
+    username: 'ChatBot AI',
+    avatar: '🤖',
+    status: 'online',
+    bio: 'Official Nexora AI Assistant'
+  };
 
   // Filter attachments sent in this room
   const mediaFiles = messages
@@ -48,70 +35,35 @@ export default function InfoPanel({
     <aside className="info-panel animate-fadeIn">
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-        <h3 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Info size={16} color="var(--primary-accent)" /> Details
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Info size={16} color="var(--primary-accent)" /> Contact Info
         </h3>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer' }}>
           <X size={18} />
         </button>
       </div>
 
-      {/* Room Overview Card */}
+      {/* Contact Card */}
       <div style={{
-        padding: '14px',
-        background: 'rgba(0,0,0,0.2)',
-        borderRadius: 'var(--border-radius-md)',
+        padding: '20px 14px',
+        background: 'var(--bg-dark-header)',
+        borderRadius: '12px',
         border: '1px solid var(--bg-glass-border)',
-        marginBottom: '20px'
+        marginBottom: '20px',
+        textAlign: 'center'
       }}>
-        <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-main)', marginBottom: '4px' }}>
-          {roomName}
+        <div style={{ fontSize: '3rem', marginBottom: '8px' }}>
+          {otherUser.avatar || '👤'}
         </div>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)' }}>
-          {roomDesc}
+        <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', marginBottom: '2px' }}>
+          {otherUser.username}
+        </div>
+        <div style={{ fontSize: '0.82rem', color: 'var(--whatsapp-green)', fontWeight: 600, marginBottom: '8px' }}>
+          {otherUser.status === 'online' ? '● Online' : 'Offline'}
+        </div>
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', padding: '8px 12px', borderRadius: '8px' }}>
+          "{otherUser.bio || 'Hey there! I am using Nexora.'}"
         </p>
-        {category && (
-          <div style={{ marginTop: '8px' }}>
-            <span className="badge badge-primary">{category}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Active Room Members */}
-      <div style={{ marginBottom: '24px' }}>
-        <div className="section-label" style={{ marginBottom: '10px' }}>
-          <Users size={14} /> MEMBERS ({users.length})
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-          {users.map(u => (
-            <div
-              key={u.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '6px 10px',
-                borderRadius: 'var(--border-radius-md)',
-                background: 'rgba(255, 255, 255, 0.03)'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ position: 'relative', fontSize: '1.1rem' }}>
-                  {u.avatar}
-                  <span className={`status-dot ${u.status}`} style={{ position: 'absolute', bottom: -2, right: -2, width: 8, height: 8 }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                    {u.username} {u.id === currentUser.id && '(You)'}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>{u.bio}</div>
-                </div>
-              </div>
-
-              {u.id === currentUser.id && <ShieldCheck size={14} color="var(--primary-accent)" />}
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* Shared Media Gallery */}
@@ -122,10 +74,10 @@ export default function InfoPanel({
 
         {mediaFiles.length === 0 ? (
           <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
-            No media attachments shared in this channel yet.
+            No media attachments shared in this chat yet.
           </p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', maxHeight: '220px', overflowY: 'auto' }}>
             {mediaFiles.map((file, idx) => (
               <div
                 key={idx}

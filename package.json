@@ -1,12 +1,30 @@
 {
-  "name": "chat-application-root",
+  "name": "nexora-chat-app",
   "version": "1.0.0",
-  "description": "Real-Time Glassmorphism Chat Application with Node.js, Express, Socket.io, React & Vite",
+  "description": "Nexora — Real-Time Glassmorphism Chat Application with Node.js, Express, Socket.io, React & Vite",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "node Backend/Server.js",
-    "server": "npm --prefix Backend dev",
-    "client": "npm --prefix Frontend dev",
-    "build": "npm --prefix Frontend build"
+    "server": "npm --prefix Backend run dev",
+    "serve": "npm --prefix Backend run dev",
+    "backend": "npm --prefix Backend run dev",
+    "client": "npm --prefix Frontend run dev",
+    "frontend": "npm --prefix Frontend run dev",
+    "dev": "node -e \"const { spawn } = require('child_process'); spawn('node', ['Backend/Server.js'], { stdio: 'inherit', shell: true }); spawn('npm', ['--prefix', 'Frontend', 'run', 'dev'], { stdio: 'inherit', shell: true });\"",
+    "build": "npm --prefix Frontend run build"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "lucide-react": "^0.439.0",
+    "multer": "^1.4.5-lts.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.3",
+    "uuid": "^9.0.1"
   }
 }

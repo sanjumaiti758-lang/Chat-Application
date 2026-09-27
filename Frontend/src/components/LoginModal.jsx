@@ -41,7 +41,7 @@ export default function LoginModal({ onLogin }) {
             💬
           </div>
           <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '1.6rem', fontWeight: 800 }}>
-            Join ChatPulse
+            Join Nexora
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
             Enter your display name & pick an avatar to get started

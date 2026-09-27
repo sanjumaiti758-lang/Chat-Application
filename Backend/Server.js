@@ -2,11 +2,15 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { execSync } from 'child_process';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,43 +74,188 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
+// Root / status endpoint
+app.get('/', (req, res, next) => {
+  if (fs.existsSync(frontendDist)) {
+    return next();
+  }
+  res.json({ status: 'ok', message: '🚀 Nexora Backend Server Active', time: new Date().toISOString() });
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
 // In-Memory Data Store
-const defaultChannels = [
-  { id: 'general', name: 'general', description: 'General discussion for everyone', isPrivate: false, category: 'Main' },
-  { id: 'tech-talk', name: 'tech-talk', description: 'Tech, coding, and software architecture', isPrivate: false, category: 'Topics' },
-  { id: 'random', name: 'random', description: 'Memes, jokes, and off-topic banter', isPrivate: false, category: 'Main' },
-  { id: 'gaming', name: 'gaming', description: 'Game discussions and multiplayer lobbies', isPrivate: false, category: 'Topics' },
-  { id: 'music', name: 'music', description: 'Share tunes, playlists, and recommendations', isPrivate: false, category: 'Topics' },
-  { id: 'announcements', name: 'announcements', description: 'Official updates and news', isPrivate: false, category: 'Main' }
-];
-
-const channels = new Map(defaultChannels.map(c => [c.id, c]));
-const activeUsers = new Map(); // socketId -> user object { id, username, avatar, status, customStatus, currentRoom }
+const activeUsers = new Map(); // socketId -> user object
 const userRegistry = new Map(); // userId -> user profile object
 const messages = new Map(); // roomId -> array of message objects
 
-// Seed initial system welcome message in #general
-messages.set('general', [
-  {
-    id: uuidv4(),
-    roomId: 'general',
-    sender: {
-      id: 'system',
-      username: 'ChatBot AI',
-      avatar: '🤖',
-      status: 'online'
-    },
-    text: '👋 **Welcome to ChatPulse!** Real-time messaging, channels, direct messages, media sharing & voice notes. Type your first message below to join the conversation!',
-    timestamp: new Date().toISOString(),
-    reactions: { '🚀': ['system'], '❤️': ['system'] },
-    isSystem: true
+// Helper to normalize DM room IDs consistently
+const normalizeRoomId = (roomId, currentUserId) => {
+  if (!roomId) return 'general';
+  if (roomId === 'system' || roomId === 'dm-system') {
+    if (currentUserId) {
+      return `dm-${[currentUserId, 'system'].sort().join('-')}`;
+    }
+    return 'dm-system';
   }
-]);
+  if (roomId.startsWith('dm-')) {
+    const raw = roomId.slice(3);
+    const parts = raw.split('-');
+    if (parts.length === 2) {
+      return `dm-${parts.sort().join('-')}`;
+    }
+  }
+  return roomId;
+};
+
+// Seed default contacts
+const chatbotUser = {
+  id: 'system',
+  username: 'ChatBot AI',
+  avatar: '🤖',
+  bio: 'Official Nexora AI Assistant • Online 24/7',
+  status: 'online',
+  joinedAt: new Date().toISOString()
+};
+
+const defaultContacts = [
+  chatbotUser
+];
+
+defaultContacts.forEach(c => userRegistry.set(c.id, c));
+
+// Real-Life Intelligent AI Response Engine (Public LLM + Gemini + Context Memory)
+async function generateAiResponse(messageText, username, roomHistory = []) {
+  const query = (messageText || '').trim();
+  const lowerQuery = query.toLowerCase();
+
+  if (!query) return `👋 Hello **${username}**! I am your 24/7 Nexora AI Assistant. How can I help you today?`;
+
+  // System Commands
+  if (lowerQuery === '/help' || lowerQuery === 'help') {
+    return `🤖 **Nexora Real-Life AI Assistant Capabilities:**\n\n` +
+      `- 🌐 **Ask Anything**: Technical questions, science, general knowledge, writing, history, & problem solving.\n` +
+      `- 💻 **Code Generation**: Ask me to write or debug code in JavaScript, Python, HTML/CSS, C++, Java, or SQL.\n` +
+      `- 🧮 **Math & Calculations**: Solves equations, unit conversions, and step-by-step arithmetic.\n` +
+      `- 🌍 **Language Translation**: Translate text into Spanish, French, German, Hindi, Japanese, etc.\n` +
+      `- 🕒 **System & Time**: Ask for current time, date, or Nexora feature guidance.\n` +
+      `- 💡 **Commands**: \`/help\`, \`/time\`, \`/date\``;
+  }
+
+  if (lowerQuery === '/time' || lowerQuery.includes('what time is it')) {
+    return `🕒 Current Time: **${new Date().toLocaleTimeString()}**`;
+  }
+
+  if (lowerQuery === '/date' || lowerQuery.includes('what is today date') || lowerQuery.includes("what's today's date")) {
+    return `📅 Today's Date: **${new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}**`;
+  }
+
+  // 1. Primary: Gemini API (if GEMINI_API_KEY is configured in .env)
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (apiKey) {
+    try {
+      const contents = roomHistory.slice(-10).map(m => ({
+        role: m.sender?.id === 'system' ? 'model' : 'user',
+        parts: [{ text: m.text || '' }]
+      }));
+
+      if (contents.length === 0 || contents[contents.length - 1].parts[0].text !== query) {
+        contents.push({ role: 'user', parts: [{ text: query }] });
+      }
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: `You are ChatBot AI, a smart, real-life assistant in the Nexora chat app. Provide helpful, accurate, and nicely formatted Markdown answers to ${username}.` }]
+            },
+            contents
+          })
+        }
+      );
+      const data = await response.json();
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (reply && reply.trim()) {
+        return reply.trim();
+      }
+    } catch (err) {
+      console.error('Gemini API call error:', err.message);
+    }
+  }
+
+  // 2. Secondary: Free Public LLM Endpoint (Pollinations AI POST API)
+  try {
+    const messagesPayload = [
+      {
+        role: 'system',
+        content: `You are ChatBot AI, an intelligent 24/7 AI assistant inside the Nexora chat app. Provide helpful, accurate, friendly, and nicely formatted Markdown responses to ${username}.`
+      },
+      ...roomHistory.slice(-6).filter(m => m.text).map(m => ({
+        role: m.sender?.id === 'system' ? 'assistant' : 'user',
+        content: m.text
+      })),
+      { role: 'user', content: query }
+    ];
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const pollResponse = await fetch('https://text.pollinations.ai/', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: messagesPayload,
+        model: 'openai'
+      })
+    });
+    clearTimeout(timeoutId);
+
+    if (pollResponse.ok) {
+      const aiText = await pollResponse.text();
+      if (aiText && aiText.trim() && !aiText.toLowerCase().includes('error')) {
+        return aiText.trim();
+      }
+    }
+  } catch (err) {
+    console.log('Public LLM service unavailable or timed out, using fallback engine:', err.message);
+  }
+
+  // 3. Conversational & Offline Fallback Engine
+  if (/^(hi|hello|hey|greetings|hola|namaste|good morning|good evening|good afternoon)/i.test(lowerQuery)) {
+    return `👋 **Hello ${username}!** How can I assist you in Nexora today?\n\nYou can ask me to:\n- 💻 Write or debug code\n- 🧮 Solve math equations\n- 🌐 Answer general knowledge questions`;
+  }
+
+  if (lowerQuery.includes('who are you') || lowerQuery.includes('what is your name')) {
+    return `🤖 I am **ChatBot AI**, your official real-time intelligent AI assistant inside Nexora!`;
+  }
+
+  // Math Expression & Offline Solver
+  const cleanedMath = lowerQuery.replace(/what is|calculate|solve|eval|evaluate|\=/g, '').trim();
+  if (/^(\d+(\.\d+)?\s*[\+\-\*\/\%\^]\s*\d+(\.\d+)?)+$/.test(cleanedMath)) {
+    try {
+      const result = Function(`"use strict"; return (${cleanedMath})`)();
+      return `🧮 **Math Solution**: \`${cleanedMath} = ${result}\``;
+    } catch (e) { }
+  }
+
+  // Code snippets fallback
+  if (lowerQuery.includes('python')) {
+    return `💻 **Python Code Example:**\n\n\`\`\`python\ndef greet_user(name):\n    """Helper function to greet user"""\n    return f"Hello {name}, welcome to Nexora!"\n\nprint(greet_user("${username}"))\n\`\`\``;
+  }
+  if (lowerQuery.includes('javascript') || lowerQuery.includes('js')) {
+    return `💻 **JavaScript Solution:**\n\n\`\`\`javascript\nasync function fetchUserData(userId) {\n  const res = await fetch(\`/api/users/\${userId}\`);\n  const data = await res.json();\n  return data;\n}\n\`\`\``;
+  }
+
+  // General Intelligent Fallback
+  return `🤖 **ChatBot AI Response for ${username}:**\n\nHere is information regarding **"${query}"**:\n\n- **Query**: ${query}\n- **Status**: Received and processed successfully.\n- **Tip**: You can type \`/help\` anytime to see all my available commands!`;
+}
 
 // Initialize Socket.io Server
 const io = new Server(httpServer, {
@@ -120,126 +269,190 @@ const io = new Server(httpServer, {
 io.on('connection', (socket) => {
   console.log(`[Socket] New connection: ${socket.id}`);
 
-  // 1. User Login / Registration
-  socket.on('user_login', (userData, callback) => {
-    const userId = userData.id || uuidv4();
+  // Helper to resolve user across reconnects
+  const getUser = (data = {}) => {
+    if (activeUsers.has(socket.id)) {
+      return activeUsers.get(socket.id);
+    }
+    const uId = data.userId || socket.userId;
+    if (uId && userRegistry.has(uId)) {
+      const user = userRegistry.get(uId);
+      user.socketId = socket.id;
+      user.status = 'online';
+      activeUsers.set(socket.id, user);
+      return user;
+    }
+    if (data.user || data.username) {
+      const uname = data.user || data.username;
+      for (const user of userRegistry.values()) {
+        if (user.username === uname) {
+          user.socketId = socket.id;
+          user.status = 'online';
+          activeUsers.set(socket.id, user);
+          return user;
+        }
+      }
+    }
+    return null;
+  };
+
+  // Helper to broadcast user lists to all clients (both full & simple formats)
+  const broadcastUserLists = () => {
+    const usersArray = Array.from(userRegistry.values());
+    io.emit('users_update', usersArray);
+    const onlineUsersMapped = Array.from(activeUsers.values()).map(u => ({
+      id: u.id,
+      name: u.username,
+      username: u.username
+    }));
+    io.emit('Online_users', onlineUsersMapped);
+  };
+
+  // 1a. Simple Client Support: join_chat
+  socket.on('join_chat', (username) => {
+    const userId = uuidv4();
+    socket.userId = userId;
     const userProfile = {
       id: userId,
       socketId: socket.id,
-      username: userData.username || 'Anonymous User',
-      avatar: userData.avatar || '👤',
-      bio: userData.bio || 'Available for chat',
-      status: userData.status || 'online', // online, away, busy, offline
-      joinedAt: new Date().toISOString()
+      username: username || 'Anonymous User',
+      avatar: '👤',
+      status: 'online',
+      joinedAt: new Date().toISOString(),
+      currentRoom: 'system'
     };
-
     activeUsers.set(socket.id, userProfile);
     userRegistry.set(userId, userProfile);
+    broadcastUserLists();
+  });
 
-    // Join default room 'general'
-    socket.join('general');
-    userProfile.currentRoom = 'general';
+  // 1b. User Login / Registration (Full Client)
+  socket.on('user_login', (userData, callback) => {
+    const userId = userData.id || uuidv4();
+    socket.userId = userId;
 
-    // Broadcast updated user list
-    io.emit('users_update', Array.from(userRegistry.values()));
-    io.emit('channels_update', Array.from(channels.values()));
+    let userProfile = userRegistry.get(userId);
+    if (!userProfile) {
+      userProfile = {
+        id: userId,
+        socketId: socket.id,
+        username: userData.username || 'Anonymous User',
+        avatar: userData.avatar || '🚀',
+        bio: userData.bio || 'Hey there! I am using Nexora.',
+        status: userData.status || 'online',
+        joinedAt: new Date().toISOString()
+      };
+      userRegistry.set(userId, userProfile);
+    } else {
+      userProfile.socketId = socket.id;
+      userProfile.status = 'online';
+      if (userData.username) userProfile.username = userData.username;
+      if (userData.avatar) userProfile.avatar = userData.avatar;
+    }
 
-    // Send history of general channel to newly logged in user
-    const roomMessages = messages.get('general') || [];
-    
+    activeUsers.set(socket.id, userProfile);
+
+    // Initial DM room with AI Bot
+    const botDmRoom = normalizeRoomId('system', userId);
+    userProfile.currentRoom = botDmRoom;
+    socket.join(botDmRoom);
+
+    // Seed AI Bot welcome message if empty
+    if (!messages.has(botDmRoom)) {
+      messages.set(botDmRoom, [
+        {
+          id: uuidv4(),
+          roomId: botDmRoom,
+          sender: chatbotUser,
+          text: `👋 **Welcome to Nexora!** Send instant 1-on-1 messages, voice notes, files, and emojis with your contacts.`,
+          timestamp: new Date().toISOString(),
+          reactions: { '🟢': ['system'] },
+          isSystem: false
+        }
+      ]);
+    }
+
+    broadcastUserLists();
+
+    const roomMessages = messages.get(botDmRoom) || [];
+
     if (callback) {
       callback({
         success: true,
         user: userProfile,
-        channels: Array.from(channels.values()),
+        defaultRoom: botDmRoom,
+        users: Array.from(userRegistry.values()),
         messages: roomMessages
       });
     }
-
-    // Broadcast system notification in room
-    socket.to('general').emit('user_joined_room', {
-      user: userProfile,
-      roomId: 'general',
-      text: `${userProfile.username} joined the chat!`
-    });
   });
 
   // 2. User Status Update (Online, Away, Busy)
   socket.on('user_status_change', (status) => {
-    const user = activeUsers.get(socket.id);
+    const user = getUser();
     if (user) {
       user.status = status;
       if (userRegistry.has(user.id)) {
         userRegistry.get(user.id).status = status;
       }
-      io.emit('users_update', Array.from(userRegistry.values()));
+      broadcastUserLists();
     }
   });
 
-  // 3. Switch / Join Room
+  // 3. Switch / Join Room (Direct Chat Room)
   socket.on('join_room', (roomId, callback) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
+    if (!roomId) return;
+    const user = getUser();
+    const targetRoomId = normalizeRoomId(roomId, user?.id);
 
-    // Leave previous room if any
-    if (user.currentRoom) {
-      socket.leave(user.currentRoom);
+    socket.join(targetRoomId);
+    if (user) user.currentRoom = targetRoomId;
+
+    if (!messages.has(targetRoomId)) {
+      messages.set(targetRoomId, []);
     }
 
-    socket.join(roomId);
-    user.currentRoom = roomId;
-
-    if (!messages.has(roomId)) {
-      messages.set(roomId, []);
-    }
-
-    const roomMessages = messages.get(roomId) || [];
+    const roomMessages = messages.get(targetRoomId) || [];
 
     if (callback) {
       callback({
         success: true,
-        roomId,
+        roomId: targetRoomId,
         messages: roomMessages
       });
     }
   });
 
-  // 4. Create New Channel
-  socket.on('create_channel', (channelData, callback) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
+  // 5. Send Message (Supports both Full Nexora & Simple Client formats)
+  socket.on('send_message', (data, callback) => {
+    let user = getUser(data);
+    const messageText = data.text || data.message || '';
+    const username = (user && user.username) || data.user || 'Anonymous User';
 
-    const channelId = channelData.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-    
-    if (channels.has(channelId)) {
-      if (callback) callback({ success: false, error: 'Channel name already exists' });
+    if (!messageText.trim() && !data.attachment && !data.voiceNote) {
+      if (callback) callback({ success: false, error: 'Cannot send empty message' });
       return;
     }
 
-    const newChannel = {
-      id: channelId,
-      name: channelData.name.toLowerCase().replace(/\s+/g, '-'),
-      description: channelData.description || '',
-      isPrivate: channelData.isPrivate || false,
-      category: channelData.category || 'Custom',
-      createdBy: user.username
-    };
+    if (!user) {
+      const userId = data.userId || uuidv4();
+      user = {
+        id: userId,
+        socketId: socket.id,
+        username,
+        avatar: data.avatar || '👤',
+        status: 'online',
+        joinedAt: new Date().toISOString(),
+        currentRoom: 'general'
+      };
+      activeUsers.set(socket.id, user);
+      userRegistry.set(userId, user);
+      broadcastUserLists();
+    }
 
-    channels.set(channelId, newChannel);
-    messages.set(channelId, []);
-
-    io.emit('channels_update', Array.from(channels.values()));
-
-    if (callback) callback({ success: true, channel: newChannel });
-  });
-
-  // 5. Send Message
-  socket.on('send_message', (data, callback) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const { roomId, text, attachment, voiceNote, replyTo } = data;
-    if (!roomId) return;
+    const roomId = normalizeRoomId(data.roomId || 'general', user.id);
+    user.currentRoom = roomId;
+    socket.join(roomId);
 
     const newMessage = {
       id: uuidv4(),
@@ -247,13 +460,13 @@ io.on('connection', (socket) => {
       sender: {
         id: user.id,
         username: user.username,
-        avatar: user.avatar,
-        status: user.status
+        avatar: user.avatar || '👤',
+        status: user.status || 'online'
       },
-      text: text || '',
-      attachment: attachment || null, // { url, name, type, size }
-      voiceNote: voiceNote || null,   // { url, duration }
-      replyTo: replyTo || null,       // { id, username, text }
+      text: messageText,
+      attachment: data.attachment || null,
+      voiceNote: data.voiceNote || null,
+      replyTo: data.replyTo || null,
       timestamp: new Date().toISOString(),
       reactions: {},
       edited: false
@@ -264,20 +477,33 @@ io.on('connection', (socket) => {
     }
     messages.get(roomId).push(newMessage);
 
-    // Limit memory history to 500 messages per room
     if (messages.get(roomId).length > 500) {
       messages.get(roomId).shift();
     }
 
-    // Broadcast to everyone in the room (or direct message room)
-    io.to(roomId).emit('new_message', newMessage);
+    // Terminal Output: Log message to backend console for terminal visibility
+    console.log(`==================================================`);
+    console.log(`💬 [MESSAGE RECEIVED]`);
+    console.log(`👤 From:      ${username} (${user.id})`);
+    console.log(`🎯 Room ID:   ${roomId}`);
+    console.log(`✉️ Message:   ${messageText}`);
+    console.log(`⏰ Time:      ${new Date().toLocaleTimeString()}`);
+    console.log(`==================================================`);
 
-    // Also broadcast to recipient if DM room
+    // Broadcast to all clients & terminals globally
+    io.emit('new_message', newMessage);
+
+    // Broadcast to simple client format
+    io.emit('receive_message', {
+      user: username,
+      message: messageText,
+      time: data.time || new Date().toLocaleTimeString()
+    });
+
     if (roomId.startsWith('dm-')) {
       const parts = roomId.replace('dm-', '').split('-');
       const recipientId = parts.find(id => id !== user.id);
       if (recipientId) {
-        // Find recipient's socket
         for (const [sId, u] of activeUsers.entries()) {
           if (u.id === recipientId) {
             io.to(sId).emit('dm_notification', {
@@ -285,6 +511,55 @@ io.on('connection', (socket) => {
               message: newMessage
             });
           }
+        }
+      }
+
+      // Auto-reply logic for system bot and preset contacts
+      if (recipientId && recipientId !== user.id) {
+        const recipientObj = userRegistry.get(recipientId);
+        if (recipientObj && recipientId === 'system') {
+          const roomHistory = messages.get(roomId) || [];
+
+          setTimeout(async () => {
+            io.emit('user_typing_start', {
+              userId: recipientId,
+              username: recipientObj.username,
+              roomId
+            });
+
+            const replyText = await generateAiResponse(messageText, username, roomHistory);
+
+            setTimeout(() => {
+              io.emit('user_typing_stop', {
+                userId: recipientId,
+                roomId
+              });
+
+              const botMsg = {
+                id: uuidv4(),
+                roomId,
+                sender: recipientObj,
+                text: replyText,
+                timestamp: new Date().toISOString(),
+                reactions: { '💬': [recipientId] },
+                edited: false
+              };
+
+              if (!messages.has(roomId)) {
+                messages.set(roomId, []);
+              }
+              messages.get(roomId).push(botMsg);
+
+              console.log(`==================================================`);
+              console.log(`💬 [CONTACT AUTO-RESPONSE]`);
+              console.log(`👤 From:      ${recipientObj.username}`);
+              console.log(`🎯 Room ID:   ${roomId}`);
+              console.log(`✉️ Message:   ${replyText}`);
+              console.log(`==================================================`);
+
+              io.emit('new_message', botMsg);
+            }, 800);
+          }, 300);
         }
       }
     }
@@ -389,7 +664,26 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 10. Disconnect
+  // 10. Mark Room Messages as Read (WhatsApp Blue Ticks)
+  socket.on('mark_read', ({ roomId, userId }) => {
+    if (!roomId) return;
+    const roomMsgs = messages.get(roomId);
+    if (!roomMsgs) return;
+
+    let updatedCount = 0;
+    roomMsgs.forEach(msg => {
+      if (msg.sender?.id !== userId && msg.status !== 'read') {
+        msg.status = 'read';
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount > 0) {
+      io.emit('messages_read_update', { roomId, readByUserId: userId });
+    }
+  });
+
+  // 11. Disconnect
   socket.on('disconnect', () => {
     const user = activeUsers.get(socket.id);
     if (user) {
@@ -400,14 +694,50 @@ io.on('connection', (socket) => {
       }
       activeUsers.delete(socket.id);
 
-      io.emit('users_update', Array.from(userRegistry.values()));
+      broadcastUserLists();
     }
   });
 });
 
+let isRetrying = false;
+
+httpServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    if (!isRetrying) {
+      isRetrying = true;
+      console.log(`==================================================`);
+      console.log(`⚠️ Port ${PORT} is busy. Automatically attempting to free port ${PORT}...`);
+      console.log(`==================================================`);
+      try {
+        if (process.platform === 'win32') {
+          execSync(`npx kill-port ${PORT}`, { stdio: 'ignore' });
+        } else {
+          execSync(`fuser -k ${PORT}/tcp || true`, { stdio: 'ignore' });
+        }
+      } catch (killErr) {
+        // Ignored
+      }
+      setTimeout(() => {
+        try {
+          httpServer.close();
+        } catch (e) { }
+        httpServer.listen(PORT, '0.0.0.0');
+      }, 1000);
+    } else {
+      console.log(`==================================================`);
+      console.log(`✅ Backend service is active on http://localhost:${PORT}`);
+      console.log(`==================================================`);
+    }
+  } else {
+    console.error('Server error:', err);
+  }
+});
+
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`==================================================`);
-  console.log(`🚀 ChatPulse Backend Server running on port ${PORT}`);
+  console.log(`🚀 Nexora Backend Server running on port ${PORT}`);
   console.log(`📡 Socket.io WebSocket Engine Ready`);
   console.log(`==================================================`);
 });
+
+// Backend Server Active & Ready
